@@ -1,3 +1,7 @@
+# Clion
+.idea
+CMakeLists.txt
+
 # CMake
 cmake-build-*/
 
