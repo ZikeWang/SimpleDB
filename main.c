@@ -9,6 +9,25 @@ typedef struct {
     ssize_t input_length; // signed
 } InputBuffer;
 
+typedef enum {
+    META_COMMAND_SUCCESS,
+    META_COMMAND_UNRECOGNIZED
+} MetaCommandResult;
+
+typedef enum {
+    PREPARE_SUCCESS,
+    PREPARE_UNRECOGNIZED_STATEMENT
+} PrepareResult;
+
+typedef enum {
+    STATEMENT_SELECT,
+    STATEMENT_INSERT
+} StatementType;
+
+typedef struct {
+    StatementType type;
+} Statement;
+
 // initialize an InputBuffer instance
 InputBuffer* new_input_buffer() {
     InputBuffer* input_buffer = (InputBuffer*)malloc(sizeof(InputBuffer));
@@ -20,10 +39,12 @@ InputBuffer* new_input_buffer() {
     return input_buffer;
 }
 
+// refer to sqlite's prompt
 void print_prompt() {
-    printf("db > "); // reference to sqlite's prompt
+    printf("db > ");
 }
 
+// Get the user input statements and store them in a custom memory buffer
 void read_input(InputBuffer* input_buffer) {
     // If the first parameter is set to NULL, it is mallocatted by getline()
     // and should thus be freed by the user, even if the command fails.
@@ -47,6 +68,42 @@ void close_input_buffer(InputBuffer* input_buffer) {
     free(input_buffer); // new_input_buffer() allocates memory
 }
 
+// a wrapper for processing meta command
+MetaCommandResult do_meta_command(InputBuffer* input_buffer) {
+    if (strcmp(input_buffer->buffer, ".exit") == 0) {
+        exit(EXIT_SUCCESS); // not return META_COMMAND_SUCCESS(0), but should terminate the program
+    }
+    else {
+        return META_COMMAND_UNRECOGNIZED;
+    }
+}
+
+// hacky version of the "SQL Compiler"
+PrepareResult prepare_statement(InputBuffer* input_buffer, Statement* statement) {
+    if (strncmp(input_buffer->buffer, "select", 6) == 0) {
+        statement->type = STATEMENT_SELECT;
+        return PREPARE_SUCCESS;
+    }
+    else if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
+        statement->type = STATEMENT_INSERT;
+        return PREPARE_SUCCESS;
+    }
+
+    return PREPARE_UNRECOGNIZED_STATEMENT;
+}
+
+// hacky version of the virtual machine
+void execute_statement(Statement* statement) {
+    switch (statement->type) {
+        case (STATEMENT_SELECT) :
+            printf("TODO: this is where we would do a select.\n");
+            break;
+        case (STATEMENT_INSERT) :
+            printf("TODO: this is where we would do a insert.\n");
+            break;
+    }
+}
+
 int main(int argc, char* argv[]) {
     InputBuffer* input_buffer = new_input_buffer();
 
@@ -54,11 +111,30 @@ int main(int argc, char* argv[]) {
         print_prompt(); // 打印提示符
         read_input(input_buffer);
 
-        if (strcmp(input_buffer->buffer, ".exit") == 0) {
-            close_input_buffer(input_buffer);
-            exit(EXIT_SUCCESS);
-        } else { // reference to sqlite
-            printf("Error: unknown command or invalid arguments: '%s'.\n", input_buffer->buffer);
+        // Processing meta-commands, i.e., non-SQL statements, starting with a dot
+        if (input_buffer->buffer[0] == '.') {
+            switch (do_meta_command(input_buffer)) {
+                case (META_COMMAND_SUCCESS) :
+                    printf("META_COMMAND_SUCCESS\n");
+                    continue;
+                case (META_COMMAND_UNRECOGNIZED) :
+                    printf("Error: unknown meta-command: '%s'.\n", input_buffer->buffer);
+                    continue;
+            }
         }
+
+        // Parsing SQL statements, converting input rows to internal representation
+        Statement statement;
+        switch (prepare_statement(input_buffer, &statement)) {
+            case (PREPARE_SUCCESS) :
+                break;
+            case (PREPARE_UNRECOGNIZED_STATEMENT) :
+                printf("Error: unknown statement: '%s'.\n", input_buffer->buffer);
+                continue;
+        }
+
+        // Executing SQL statement
+        execute_statement(&statement);
+        printf("Executed.\n");
     }
 }
