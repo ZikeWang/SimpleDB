@@ -4,12 +4,12 @@
 #include <stdlib.h> // exit(); #define EXIT_SUCCESS 0, #define EXIT_FAILURE 1
 #include <stdint.h> // uint32_t
 
-// store user inputs
-typedef struct {
-    char* buffer;
-    size_t buffer_length; // unsigned
-    ssize_t input_length; // signed
-} InputBuffer;
+// macro to calculate the size of a member in a specific struct
+#define size_of_member(Type, Member) sizeof(((Type*)0)->Member)
+
+#define COLUMN_USERNAME_SIZE 32
+#define COLUMN_EMAIL_SIZE 255
+#define TABLE_MAX_PAGES 100 // arbitrary limit of pages we can allocate
 
 typedef enum {
     META_COMMAND_SUCCESS,
@@ -32,9 +32,6 @@ typedef enum {
     STATEMENT_INSERT
 } StatementType;
 
-#define COLUMN_USERNAME_SIZE 32
-#define COLUMN_EMAIL_SIZE 255
-
 // row structure
 typedef struct {
     uint32_t id;
@@ -48,8 +45,18 @@ typedef struct {
     Row row_to_insert; // store the parameters in the insert statement
 } Statement;
 
-// macro to calculate the size of a member in a specific struct
-#define size_of_member(Type, Member) sizeof(((Type*)0)->Member)
+// keeps track of how many rows there are and pointers to each page
+typedef struct {
+    uint32_t num_rows;
+    void* pages[TABLE_MAX_PAGES];
+} Table;
+
+// store user inputs
+typedef struct {
+    char* buffer;
+    size_t buffer_length; // unsigned
+    ssize_t input_length; // signed
+} InputBuffer;
 
 // define the size of the members in the Row struct
 const uint32_t ID_SIZE = size_of_member(Row, id);
@@ -62,31 +69,20 @@ const uint32_t ID_OFFSET = 0;
 const uint32_t USERNAME_OFFSET = ID_OFFSET + ID_SIZE;
 const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
 
-// Compactly store each member of Row-struct according to the offset
-void serialize_row(Row* source, void* destination) {
-    memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
-    memcpy(destination + USERNAME_OFFSET, &(source->username), USERNAME_SIZE);
-    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
-}
-
-// Convert compact representation to a Row-struct instance
-void deserialize_row(void* source, Row* destination) {
-    memcpy(&(destination->id), source + ID_OFFSET, ID_SIZE);
-    memcpy(&(destination->username), source + USERNAME_OFFSET, USERNAME_SIZE);
-    memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
-}
-
 // define constants related to the size and number of pages in memory
-#define TABLE_MAX_PAGES 100 // arbitrary limit of pages we can allocate
 const uint32_t PAGE_SIZE = 4096; // 4KB, consistent with the page size of virtual memory in os
 const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = TABLE_MAX_PAGES * ROWS_PER_PAGE;
 
-// keeps track of how many rows there are and pointers to each page
-typedef struct {
-    uint32_t num_rows;
-    void* pages[TABLE_MAX_PAGES];
-} Table;
+// refer to sqlite's prompt
+void print_prompt() {
+    printf("db > ");
+}
+
+// print row data
+void print_row(Row* row) {
+    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
+}
 
 // create a Table and allocate memory
 Table* new_table() {
@@ -98,6 +94,17 @@ Table* new_table() {
     }
 
     return table;
+}
+
+// release memory allocated to Table
+void free_table(Table* table) {
+    // It's tricky here, because according to the implementation in row_slot,
+    // pages are assigned according to the number of rows, and the loop exits
+    // when the first empty page is encountered("table->pages[i] == NULL")
+    for (uint32_t i = 0; table->pages[i]; ++i) {
+        free(table->pages[i]);
+    }
+    free(table);
 }
 
 // In this compact representation,
@@ -119,20 +126,18 @@ void* row_slot(Table* table, uint32_t row_num) {
     return page + byte_offset; // row start address = page start address + page offset
 }
 
-// release memory allocated to Table
-void free_table(Table* table) {
-    // It's tricky here, because according to the implementation in row_slot,
-    // pages are assigned according to the number of rows, and the loop exits
-    // when the first empty page is encountered("table->pages[i] == NULL")
-    for (uint32_t i = 0; table->pages[i]; ++i) {
-        free(table->pages[i]);
-    }
-    free(table);
+// Compactly store each member of Row-struct according to the offset
+void serialize_row(Row* source, void* destination) {
+    memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
+    memcpy(destination + USERNAME_OFFSET, &(source->username), USERNAME_SIZE);
+    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
 }
 
-// refer to sqlite's prompt
-void print_prompt() {
-    printf("db > ");
+// Convert compact representation to a Row-struct instance
+void deserialize_row(void* source, Row* destination) {
+    memcpy(&(destination->id), source + ID_OFFSET, ID_SIZE);
+    memcpy(&(destination->username), source + USERNAME_OFFSET, USERNAME_SIZE);
+    memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
 // initialize an InputBuffer instance
@@ -144,6 +149,12 @@ InputBuffer* new_input_buffer() {
     input_buffer->input_length = 0;
 
     return input_buffer;
+}
+
+// free the memory allocated for the instance and element of the respective structure
+void close_input_buffer(InputBuffer* input_buffer) {
+    free(input_buffer->buffer); // getline() allocates memory in read_input()
+    free(input_buffer); // new_input_buffer() allocates memory
 }
 
 // Get the user input statements and store them in a custom memory buffer
@@ -162,12 +173,6 @@ void read_input(InputBuffer* input_buffer) {
     // if read succeeded, ignore trailing newline
     input_buffer->input_length = bytes_read - 1;
     input_buffer->buffer[bytes_read - 1] = 0; // value 0 should be used, not character '0'
-}
-
-// free the memory allocated for the instance and element of the respective structure
-void close_input_buffer(InputBuffer* input_buffer) {
-    free(input_buffer->buffer); // getline() allocates memory in read_input()
-    free(input_buffer); // new_input_buffer() allocates memory
 }
 
 // a wrapper for processing meta command
@@ -201,11 +206,6 @@ PrepareResult prepare_statement(InputBuffer* input_buffer, Statement* statement)
     }
 
     return PREPARE_UNRECOGNIZED_STATEMENT;
-}
-
-// print row data
-void print_row(Row* row) {
-    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
 }
 
 // execution of a "select" statement
