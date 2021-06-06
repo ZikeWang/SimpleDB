@@ -35,8 +35,8 @@ typedef enum {
 // row structure
 typedef struct {
     uint32_t id;
-    char username[COLUMN_USERNAME_SIZE];
-    char email[COLUMN_EMAIL_SIZE];
+    char username[COLUMN_USERNAME_SIZE + 1]; //  C strings are supposed to end with a null character
+    char email[COLUMN_EMAIL_SIZE + 1]; // so we should allocate one additional byte for username & email
 } Row;
 
 // user input statement
