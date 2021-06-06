@@ -20,7 +20,8 @@ typedef enum {
     PREPARE_SUCCESS,
     PREPARE_UNRECOGNIZED_STATEMENT,
     PREPARE_SYNTAX_ERROR,
-    PREPARE_STRING_TOO_LONG
+    PREPARE_STRING_TOO_LONG,
+    PREPARE_NEGATIVE_ID
 } PrepareResult;
 
 typedef  enum {
@@ -197,6 +198,10 @@ PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* statement) {
     char* username = strtok(NULL, " ");
     char* email = strtok(NULL, " "); // scan stops if the terminating null character is found
 
+    int id = atoi(id_string); // can not use uint_32(unsigned)
+    if (id < 0) {
+        return PREPARE_NEGATIVE_ID;
+    }
     if (!id_string || !username || !email) {
         return PREPARE_SYNTAX_ERROR;
     }
@@ -204,7 +209,7 @@ PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* statement) {
         return PREPARE_STRING_TOO_LONG;
     }
 
-    statement->row_to_insert.id = atoi(id_string);
+    statement->row_to_insert.id = id;
     strcpy(statement->row_to_insert.username, username);
     strcpy(statement->row_to_insert.email, email);
 
@@ -292,6 +297,9 @@ int main(int argc, char* argv[]) {
                 continue;
             case (PREPARE_STRING_TOO_LONG) :
                 printf("String is too long.\n");
+                continue;
+            case (PREPARE_NEGATIVE_ID) :
+                printf("ID must be positive.\n");
                 continue;
         }
 
