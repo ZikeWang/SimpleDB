@@ -19,7 +19,8 @@ typedef enum {
 typedef enum {
     PREPARE_SUCCESS,
     PREPARE_UNRECOGNIZED_STATEMENT,
-    PREPARE_SYNTAX_ERROR
+    PREPARE_SYNTAX_ERROR,
+    PREPARE_STRING_TOO_LONG
 } PrepareResult;
 
 typedef  enum {
@@ -185,24 +186,41 @@ MetaCommandResult do_meta_command(InputBuffer* input_buffer) {
     }
 }
 
+// Since input_buffer can be large enough, but the size of the array in Row-struct is limited,
+// so after reading user input into input_buffer, the string is first split into four substrings,
+// and only when the substrings username and email are of legal length can be written to Row-struct
+PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* statement) {
+    statement->type = STATEMENT_INSERT;
+
+    char* keyword = strtok(input_buffer->buffer, " ");
+    char* id_string = strtok(NULL, " ");
+    char* username = strtok(NULL, " ");
+    char* email = strtok(NULL, " "); // scan stops if the terminating null character is found
+
+    if (!id_string || !username || !email) {
+        return PREPARE_SYNTAX_ERROR;
+    }
+    if (strlen(username) > COLUMN_USERNAME_SIZE || strlen(email) > COLUMN_EMAIL_SIZE) {
+        return PREPARE_STRING_TOO_LONG;
+    }
+
+    statement->row_to_insert.id = atoi(id_string);
+    strcpy(statement->row_to_insert.username, username);
+    strcpy(statement->row_to_insert.email, email);
+
+    return PREPARE_SUCCESS;
+}
+
 // hacky version of the "SQL Compiler"
 PrepareResult prepare_statement(InputBuffer* input_buffer, Statement* statement) {
+    // In SimpleDB, "select" is used to print all rows, so there is no need to use strncmp
     if (strcmp(input_buffer->buffer, "select") == 0) {
-        // In this implementation, "select" is a complete command with no additional
-        // arguments to print all rows,so there is no need to use strncmp
         statement->type = STATEMENT_SELECT;
         return PREPARE_SUCCESS;
     }
+    // In SimpleDB, "insert x y z" takes 3 parameters(id, username, email), so we need to use strncmp
     else if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
-        // In this implementation, "insert x y z" takes three parameters,
-        // which are id, username and email, so we need to use strncmp
-        statement->type = STATEMENT_INSERT;
-        int args_assigned = sscanf(input_buffer->buffer, "insert %d %s %s", &(statement->row_to_insert.id),
-                                   statement->row_to_insert.username, statement->row_to_insert.email);
-        if (args_assigned != 3) {
-            return PREPARE_SYNTAX_ERROR;
-        }
-        return PREPARE_SUCCESS;
+        return prepare_insert(input_buffer, statement);
     }
 
     return PREPARE_UNRECOGNIZED_STATEMENT;
@@ -271,6 +289,9 @@ int main(int argc, char* argv[]) {
                 continue;
             case (PREPARE_SYNTAX_ERROR) :
                 printf("Syntax error, can't parse statement: '%s'.\n", input_buffer->buffer);
+                continue;
+            case (PREPARE_STRING_TOO_LONG) :
+                printf("String is too long.\n");
                 continue;
         }
 
